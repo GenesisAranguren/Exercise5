@@ -1,0 +1,212 @@
+---
+title: "PDP"
+date: "2023-04-21"
+output: html_document
+---
+# Deployment: Model-agnostic methods
+
+## Exercise 5.- Model-agnostic: Partial Dependency Plot (PDP).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Libraries
+library(reshape2)
+library(plotly)
+library(dplyr)
+library(pdp)
+library(randomForest)
+library(corrplot)
+library(pdp)
+library(patchwork)
+```
+
+### Exercise 1.- One dimensional Partial Dependence Plot.
+
+**EXERCISE: Apply PDP to the regression example of predicting bike rentals. Fit a random forest approximation for the prediction of bike rentals (cnt). Use the partial dependence plot to visualize the relationships the model learned.**
+
+```{r, echo=FALSE}
+data <- read.csv("day.csv")
+# One-hot encoding for the season feature
+data$winter= ifelse(data$season==1,1,0)
+data$spring= ifelse(data$season==2,1,0)
+data$summer= ifelse(data$season==3,1,0)
+# One-hot encoding for the weathersit feature
+    # Creation of Misty
+data$misty= ifelse(data$weathersit==2,1,0)
+    # Creation of Rain
+data$rain= ifelse(data$weathersit>2,1,0)
+# Denormalize temp, hum and windspeed
+data$temp= (data$temp*47)-8
+data$hum= data$hum*100
+data$windspeed= data$windspeed*67
+# Create a feature to save the number of days from 1-1-2011
+data$days_since_2011 <- as.numeric(as.Date(data$dteday, "%Y-%m-%d") - as.Date("2011-01-01"))
+
+```
+
+```{r, echo=FALSE}
+set.seed(123) # for reproducibility
+
+rf_model <- randomForest(cnt ~ workingday + holiday + winter + spring + summer + misty + rain + temp + hum + windspeed + days_since_2011, data, importance = TRUE)
+
+varImpPlot(rf_model)
+```
+
+The variable importance scores indicate that the days since 2011 (*days_since_2011*), the temperature (*temp*) and the humidity (*hum*) are highly associated with the number if bikes to be rented (*cnt*). The question then arises, "What is the nature of these associations?" To help answer this, we can look at the partial dependence of *cnt* on *days_since_2011*, *temp*, *hum* and *wind_speed*. Also, we can look *temp* and *hum* together.
+
+
+First of all, we have to take into account the assumptions of PDP. It is assumed that the features for which the partial dependence is computed are not correlated with other features. When the features are correlated, we create new data points in areas of the feature distribution where the actual probability is very low. To check if this assumption is met, we can visualize the relationships of the features with a correlation graph.
+
+```{r, echo=FALSE}
+corr_matrix <- cor(data[c("days_since_2011", "temp", "hum", "windspeed",'workingday','holiday','winter','spring','summer','misty','rain')])
+corrplot(corr_matrix, method = "color")
+```
+
+It is observed that in general there is not a strong correlation between the variables, a moderate relationship of 0.6 can be highlighted between temperature and winter and summer, it is not a strong correlation. Next, we are going to analyze the partial dependence plot.
+
+```{r, echo=FALSE}
+temp_pdp=partial(rf_model, pred.var = "temp")
+hum_pdp=partial(rf_model, pred.var = "hum")
+days_pdp=partial(rf_model, pred.var = "days_since_2011")
+wind_pdp=partial(rf_model, pred.var = "windspeed")
+
+
+p1<-ggplot(temp_pdp, aes(y = yhat,x=temp)) +
+    geom_line() +
+    geom_rug(data=data,mapping=aes(y=temp),sides='b',alpha = 1/2, position = "jitter") +
+    labs(x = "Temperature", y = "Predicted bike count")+
+    ylim(0, 6000)
+
+p2<-ggplot(hum_pdp, aes(y = yhat,x=hum)) +
+    geom_line() +
+    geom_rug(data=data,mapping=aes(y=hum),sides='b') +
+    labs(x = "Humidity",y='')+
+    ylim(0, 6000)
+
+p3<-ggplot(days_pdp, aes(y = yhat,x=days_since_2011)) +
+    geom_line() +
+    geom_rug(data=data,mapping=aes(y=days_since_2011),sides='b') +
+    labs(x = "Days since 2011",y='Predicted bike count')+
+    ylim(0, 6000)
+
+p4<-ggplot(wind_pdp, aes(y = yhat,x=windspeed)) +
+    geom_line() +
+    geom_rug(data=data,mapping=aes(y=windspeed),sides='b') +
+    labs(x = "Wind spped",y='')+
+    ylim(0, 6000)
+
+p1+p2+p3+p4
+```
+```{r include=FALSE}
+```
+
+**QUESTION: Analyse the influence of days since 2011, temperature, humidity and wind speed on the predicted bike counts.**
+
+PDP for the prediction of the number of rented bicycles shows that the temperature and, mainly, the days since 2011 show the greatest difference. On the other hand, humidity and wind speed do not change so much.
+
+From the temperature graph, we see that the more the temperature rises, the more bikes are rented. This trend rises to 20 degrees Celsius, then flattens out and falls slightly to 30. In other words, for weather that is warm but not too hot, the model predicts a large number of rented bikes on average. On th other hand, the tick marks on the x-axis indicate the distribution of the data, and with this, we observe that most of the bicycle rentals have been carried out when temperatures ranged between 0ºC and 30ºC.
+
+In the graph that represents the humidity, we observe that a large part of the data is between 40% and 80% humidity. However, the number of rented bikes predicted by the model starts to drop above 60% humidity. The lower the humidity, the more bicycles are rented.
+
+As for the number of days that have passed since 2011, the greatest change can be seen, that as the days go by, people rent more bicycles. A rise in day 400 can be highlighted.
+
+Finally, the wind speed also affects the number of rented bicycles, such that the number decreases when the wind speed is greater than 25 km/h. While when the wind speed is less than 10 km/h it could exceed 4000 rented bicycles. We also see that most historical data is usually between 2 and 22 km/h.
+
+### 2.- Bidimensional Partial Dependency Plot.
+
+**EXERCISE: Generate a 2D Partial Dependency Plot with humidity and temperature to predict the number of bikes rented depending on those parameters.**
+
+```{r, echo=FALSE}
+#set.seed(123)
+sampled_data <- data[sample(nrow(data), 400),]
+
+model <- randomForest(cnt ~workingday + holiday + winter + spring + summer + misty + rain + temp + hum + windspeed + days_since_2011, data = sampled_data)
+
+pdp_data <- partial(model, pred.var = c("temp", "hum"), grid.resolution = 20)
+ggplot(pdp_data, aes(x = temp, y = hum, fill = yhat)) +
+  geom_tile()+
+  scale_fill_viridis_c() +
+  labs(x = "Temperature (°C)",
+       y = "Humidity (%)",
+       fill = "Prediction rented bikes")
+```
+
+**QUESTION: Interpret the results.**
+
+The plot shows that the largest number of rented bicycles is in an environment with low humidity with values less than 75% humidity and temperatures around 15ºC and 25ºC, where the expected number of rented bicycles exceeds 5000. On the contrary, the high humidity and low temperatures produce the lowest number of rented bicycles with figures that reach 3000 bicycles. These values match the individual PDPs for each feature.
+
+### 3.- PDP to explain the price of a house.
+
+**EXERCISE: Apply the previous concepts to predict the price of a house from the database kc_house_data.csv. In this case, use again a random forest approximation for the prediction based on the features bedrooms, bathrooms, sqft_living, sqft_lot, floors and yr_built.Use the partial dependence plot to visualize the relationships the model learned.**
+
+```{r, echo=FALSE}
+set.seed(123)
+house <- read.csv("kc_house_data.csv")
+house <- na.omit(house)
+sampled_data <- house[sample(nrow(house), 800),]
+rf_house <- randomForest(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + yr_built , data=sampled_data, importance = TRUE)
+
+varImpPlot(rf_house)
+```
+```{r include=FALSE}
+```
+
+As with the previous dataset, we are interested in knowing the importance of the characteristics to the prediction of the house price and to know how this relationship affects the prediction of the house price. Prominent in the graph above all other features is the square footage of the home's living space (*sqft_living*). The bathrooms can also be highlighted, although the rooms do not seem to affect the model much.
+
+Next, we perform a correlation matrix to verify that the PDP assumption is met.
+
+```{r, echo=FALSE}
+corr_matrix <- cor(sampled_data[c("bedrooms", "bathrooms", "sqft_living", "sqft_lot",'floors','yr_built')])
+corrplot(corr_matrix, method = "color")
+```
+
+Unlike the previous correlation matrix, this one has several relationships between variables. There are three related features: the number of rooms (*bedroom*), the number of bathrooms (*bathroom*), and the square footage of the living area of the house (*sqtf_living*). The strongest relationship is 0.7, between the last two characteristics, which intuitively makes a lot of sense, for a house to have a greater number of bathrooms, a space is necessary to place the bathroom, therefore, a larger living space is required . Although it is common, this is not always the case, there are very large houses and they do not necessarily have many bathrooms or a number proportional to the space in the house. By having this relationship it is possible that new data points are generated that are unlikely, such as a living room whose living space is very small, like 450 square feet (the equivalent of about 40 square meters) with three bathrooms, which is very unlikely.
+
+```{r, echo=FALSE}
+bed_pdp=partial(rf_house, pred.var = "bedrooms")
+bath_pdp=partial(rf_house, pred.var = "bathrooms")
+liv_pdp=partial(rf_house, pred.var = "sqft_living")
+floor_pdp=partial(rf_house, pred.var = "floors")
+
+
+p1<-ggplot(bed_pdp, aes(y = yhat,x=bedrooms)) +
+    geom_line() +
+    geom_rug(data=sampled_data,mapping=aes(y=bedrooms),sides='b',alpha = 1/2, position = "jitter") +
+    labs(x = "Nº Bedrooms", y = "Predicted price house")
+
+p2<-ggplot(bath_pdp, aes(y = yhat,x=bathrooms)) +
+    geom_line() +
+    geom_rug(data=sampled_data,mapping=aes(y=bathrooms),sides='b') +
+    labs(x = "Nº Bathrooms",y='')
+
+p3<-ggplot(liv_pdp, aes(y = yhat,x=sqft_living )) +
+    geom_line() +
+    geom_rug(data=sampled_data,mapping=aes(y=sqft_living),sides='b') +
+    labs(x = "Square feet of living space",y='Predicted price house')
+
+p4<-ggplot(floor_pdp, aes(y = yhat,x=floors)) +
+    geom_line() +
+    geom_rug(data=sampled_data,mapping=aes(y=floors),sides='b') +
+    labs(x = "Nº Floors",y='')
+
+p1+p2+p3+p4
+```
+
+```{r include=FALSE}
+
+```
+
+
+**QUESTION:Analyse the influence of bedrooms, bathrooms, sqft_living and floors on the predicted price.**
+
+When examining the four graphs, it can be seen that there are some in which the house price prediction fluctuates more, they are those in which we have verified that they were more important. In this case, it is the square footage of the living area of the home, followed by the number of bathrooms. Although we can also see a common thing in the four graphs, that is that increasing a certain characteristic also increases the value of the house. Whether you increase the living area, the number of floors, the number of bathrooms, or the number of bedrooms, the predicted price increases.
+
+The graph of the number of rooms shows that the price of the house is usually close to 600 thousand dollars, an increase in this value can be noticed if the number of rooms is 6. However, historical data shows that normally the number of rooms is between 2 and 4.
+
+The second graph shows the number of bathrooms, a house without bathrooms can have a price of 500 thousand dollars, while one with 6 bathrooms exceeds a million and a half dollars.
+
+As previously verified, the feature that has the greatest influence on house prices, depending on the model, is *sqft_living*. From the corresponding graph it can be seen that as the number of square feet of living space decreases, the price of housing also decreases. Most homes range from 1000 to 4000 square feet, with prices ranging from 500000 dollars to 1000000 dollars. However, there are cases where homes have more livable square footage, which can add significantly to the price, for example, values of 8000 square feet can exceed two million US dollars.
+
+Regarding the number of floors that the house has, it is shown that its price is usually between the values of 500 thousand and 600 thousand dollars, the increase occurs when it reaches or exceeds two floors.
+
